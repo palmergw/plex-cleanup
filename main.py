@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -36,6 +37,17 @@ BASE_HEADERS = {
 
 ActivitySet = dict[str, dict[str, int]]
 ArrApp = Literal["radarr", "sonarr"]
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+
+LOG_FILE = Path(__file__).parent / "plex-cleanup.log"
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+_log = logging.getLogger("plex-cleanup")
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -1022,6 +1034,7 @@ class GridScreen(Screen):
                     if not rec:
                         raise RuntimeError(f"Movie not found in Radarr (TMDB {tmdb}).")
                     radarr_delete(cfg, rec["id"], delete_files)
+                    _log.info("DELETED movie %r via Radarr (files_deleted=%s)", title, delete_files)
                 else:
                     tvdb = guids.get("tvdb")
                     if not tvdb:
@@ -1030,11 +1043,14 @@ class GridScreen(Screen):
                     if not rec:
                         raise RuntimeError(f"Show not found in Sonarr (TVDB {tvdb}).")
                     sonarr_delete_series(cfg, rec["id"], delete_files)
+                    _log.info("DELETED show %r via Sonarr (files_deleted=%s)", title, delete_files)
                 self.post_message(GridScreen.DeleteStatus(f"Deleted '{title}' via {arr_app.title()}.", rk=item["rk"]))
             else:
                 plex_delete(item["rk"], self.app.token)  # type: ignore[attr-defined]
+                _log.info("DELETED %s %r from Plex library (files on disk unchanged)", item["type"], title)
                 self.post_message(GridScreen.DeleteStatus(f"Deleted '{title}' from Plex.", rk=item["rk"]))
         except Exception as e:
+            _log.error("DELETE FAILED for %r: %s", title, e)
             self.post_message(GridScreen.DeleteStatus(f"Delete failed: {e}", ok=False))
 
     # ── Message handlers ───────────────────────────────────────────────────────
@@ -1238,16 +1254,21 @@ class DetailScreen(Screen):
                 if not rec:
                     raise RuntimeError(f"Show not found in Sonarr (TVDB {tvdb}).")
                 sonarr_delete_season(cfg, rec["id"], sn)
+                _log.info("DELETED show %r %s via Sonarr (files removed, season unmonitored)",
+                          self.item["title"], label)
                 self.post_message(DetailScreen.DeleteStatus(
                     f"Deleted {label} via Sonarr (files removed, season unmonitored)."
                 ))
             else:
                 # Plex-only: delete each episode's metadata; files remain on disk
                 plex_delete(self.item["rk"], self.app.token)  # type: ignore[attr-defined]
+                _log.info("DELETED show %r %s from Plex library (files on disk unchanged)",
+                          self.item["title"], label)
                 self.post_message(DetailScreen.DeleteStatus(
                     f"Deleted {label} from Plex. Files on disk are unchanged."
                 ))
         except Exception as e:
+            _log.error("DELETE FAILED for show %r %s: %s", self.item.get("title", "?"), label, e)
             self.post_message(DetailScreen.DeleteStatus(f"Delete failed: {e}", ok=False))
 
     def on_detail_screen_delete_status(self, event: DeleteStatus) -> None:
