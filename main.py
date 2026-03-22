@@ -55,12 +55,34 @@ CONFIG_VERSION = 2
 def _default_config() -> dict:
     return {"_version": CONFIG_VERSION, "plex": {}, "radarr": {}, "sonarr": {}}
 
+def _migrate_v1_to_v2(data: dict) -> dict:
+    """Migrate a v1 config (no _version key) to v2, preserving all recoverable values."""
+    cfg = _default_config()
+    if data.get("token"):
+        cfg["plex"]["token"] = data["token"]
+    if data.get("plex_server"):
+        cfg["plex"]["url"] = data["plex_server"]
+    for app in ("radarr", "sonarr"):
+        old = data.get(app, {})
+        if isinstance(old, dict):
+            if old.get("url"):
+                cfg[app]["url"] = old["url"]
+            if old.get("api_key"):
+                cfg[app]["api_key"] = old["api_key"]
+        if data.get(f"skip_arr_prompt_{app}"):
+            cfg[app]["skip_prompt"] = True
+    return cfg
+
 def load_config() -> dict:
     if CONFIG_FILE.exists():
         try:
             data = json.loads(CONFIG_FILE.read_text())
-            if isinstance(data, dict) and data.get("_version") == CONFIG_VERSION:
-                return data
+            if isinstance(data, dict):
+                if data.get("_version") == CONFIG_VERSION:
+                    return data
+                migrated = _migrate_v1_to_v2(data)
+                save_config(migrated)
+                return migrated
         except Exception:
             pass
         fresh = _default_config()
@@ -80,11 +102,11 @@ def save_token(token: str) -> None:
     save_config(cfg)
 
 def get_plex_server() -> str | None:
-    return load_config().get("plex", {}).get("server") or None
+    return load_config().get("plex", {}).get("url") or None
 
 def save_plex_server(url: str) -> None:
     cfg = load_config()
-    cfg.setdefault("plex", {})["server"] = url.rstrip("/")
+    cfg.setdefault("plex", {})["url"] = url.rstrip("/")
     save_config(cfg)
 
 def get_arr_cfg(app: ArrApp) -> dict | None:
