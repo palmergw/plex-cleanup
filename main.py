@@ -50,42 +50,59 @@ _log = logging.getLogger("plex-cleanup")
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
+CONFIG_VERSION = 2
+
+def _default_config() -> dict:
+    return {"_version": CONFIG_VERSION, "plex": {}, "radarr": {}, "sonarr": {}}
+
 def load_config() -> dict:
     if CONFIG_FILE.exists():
-        return json.loads(CONFIG_FILE.read_text())
-    return {}
+        try:
+            data = json.loads(CONFIG_FILE.read_text())
+            if isinstance(data, dict) and data.get("_version") == CONFIG_VERSION:
+                return data
+        except Exception:
+            pass
+        fresh = _default_config()
+        save_config(fresh)
+        return fresh
+    return _default_config()
 
 def save_config(cfg: dict) -> None:
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
 
 def get_saved_token() -> str | None:
-    return load_config().get("token")
+    return load_config().get("plex", {}).get("token") or None
 
 def save_token(token: str) -> None:
-    cfg = load_config(); cfg["token"] = token; save_config(cfg)
-
-def get_arr_cfg(app: ArrApp) -> dict | None:
-    c = load_config().get(app)
-    return c if (c and c.get("url") and c.get("api_key")) else None
-
-def save_arr_cfg(app: ArrApp, url: str, api_key: str) -> None:
     cfg = load_config()
-    cfg[app] = {"url": url.rstrip("/"), "api_key": api_key}
+    cfg.setdefault("plex", {})["token"] = token
     save_config(cfg)
 
 def get_plex_server() -> str | None:
-    return load_config().get("plex_server") or None
+    return load_config().get("plex", {}).get("server") or None
 
 def save_plex_server(url: str) -> None:
     cfg = load_config()
-    cfg["plex_server"] = url.rstrip("/")
+    cfg.setdefault("plex", {})["server"] = url.rstrip("/")
+    save_config(cfg)
+
+def get_arr_cfg(app: ArrApp) -> dict | None:
+    c = load_config().get(app, {})
+    return c if (c.get("url") and c.get("api_key")) else None
+
+def save_arr_cfg(app: ArrApp, url: str, api_key: str) -> None:
+    cfg = load_config()
+    cfg.setdefault(app, {}).update({"url": url.rstrip("/"), "api_key": api_key})
     save_config(cfg)
 
 def get_skip_arr_prompt(app: ArrApp) -> bool:
-    return bool(load_config().get(f"skip_arr_prompt_{app}", False))
+    return bool(load_config().get(app, {}).get("skip_prompt", False))
 
 def set_skip_arr_prompt(app: ArrApp, val: bool) -> None:
-    cfg = load_config(); cfg[f"skip_arr_prompt_{app}"] = val; save_config(cfg)
+    cfg = load_config()
+    cfg.setdefault(app, {})["skip_prompt"] = val
+    save_config(cfg)
 
 def sign_in(username: str, password: str, otp: str = "") -> str:
     data: dict = {"login": username, "password": password}
