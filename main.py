@@ -23,7 +23,6 @@ from textual.widgets import (
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-PLEX_SERVER    = "https://YOUR_PLEX_SERVER"
 PLEX_TV_SIGNIN = "https://plex.tv/api/v2/users/signin"
 CONFIG_FILE    = Path.home() / ".plex-cleanup.json"
 CLIENT_ID      = "plex-cleanup-tool"
@@ -51,34 +50,81 @@ _log = logging.getLogger("plex-cleanup")
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
+CONFIG_VERSION = 2
+
+def _default_config() -> dict:
+    return {"_version": CONFIG_VERSION, "plex": {}, "radarr": {}, "sonarr": {}}
+
+def _migrate_v1_to_v2(data: dict) -> dict:
+    """Migrate a v1 config (no _version key) to v2, preserving all recoverable values."""
+    cfg = _default_config()
+    if data.get("token"):
+        cfg["plex"]["token"] = data["token"]
+    if data.get("plex_server"):
+        cfg["plex"]["url"] = data["plex_server"]
+    for app in ("radarr", "sonarr"):
+        old = data.get(app, {})
+        if isinstance(old, dict):
+            if old.get("url"):
+                cfg[app]["url"] = old["url"]
+            if old.get("api_key"):
+                cfg[app]["api_key"] = old["api_key"]
+        if data.get(f"skip_arr_prompt_{app}"):
+            cfg[app]["skip_prompt"] = True
+    return cfg
+
 def load_config() -> dict:
     if CONFIG_FILE.exists():
-        return json.loads(CONFIG_FILE.read_text())
-    return {}
+        try:
+            data = json.loads(CONFIG_FILE.read_text())
+            if isinstance(data, dict):
+                if data.get("_version") == CONFIG_VERSION:
+                    return data
+                migrated = _migrate_v1_to_v2(data)
+                save_config(migrated)
+                return migrated
+        except Exception:
+            pass
+        fresh = _default_config()
+        save_config(fresh)
+        return fresh
+    return _default_config()
 
 def save_config(cfg: dict) -> None:
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
 
 def get_saved_token() -> str | None:
-    return load_config().get("token")
+    return load_config().get("plex", {}).get("token") or None
 
 def save_token(token: str) -> None:
-    cfg = load_config(); cfg["token"] = token; save_config(cfg)
+    cfg = load_config()
+    cfg.setdefault("plex", {})["token"] = token
+    save_config(cfg)
+
+def get_plex_server() -> str | None:
+    return load_config().get("plex", {}).get("url") or None
+
+def save_plex_server(url: str) -> None:
+    cfg = load_config()
+    cfg.setdefault("plex", {})["url"] = url.rstrip("/")
+    save_config(cfg)
 
 def get_arr_cfg(app: ArrApp) -> dict | None:
-    c = load_config().get(app)
-    return c if (c and c.get("url") and c.get("api_key")) else None
+    c = load_config().get(app, {})
+    return c if (c.get("url") and c.get("api_key")) else None
 
 def save_arr_cfg(app: ArrApp, url: str, api_key: str) -> None:
     cfg = load_config()
-    cfg[app] = {"url": url.rstrip("/"), "api_key": api_key}
+    cfg.setdefault(app, {}).update({"url": url.rstrip("/"), "api_key": api_key})
     save_config(cfg)
 
 def get_skip_arr_prompt(app: ArrApp) -> bool:
-    return bool(load_config().get(f"skip_arr_prompt_{app}", False))
+    return bool(load_config().get(app, {}).get("skip_prompt", False))
 
 def set_skip_arr_prompt(app: ArrApp, val: bool) -> None:
-    cfg = load_config(); cfg[f"skip_arr_prompt_{app}"] = val; save_config(cfg)
+    cfg = load_config()
+    cfg.setdefault(app, {})["skip_prompt"] = val
+    save_config(cfg)
 
 def sign_in(username: str, password: str, otp: str = "") -> str:
     data: dict = {"login": username, "password": password}
@@ -91,8 +137,11 @@ def sign_in(username: str, password: str, otp: str = "") -> str:
 # ── Plex API ───────────────────────────────────────────────────────────────────
 
 def plex_get(path: str, token: str, **params) -> dict:
+    server = get_plex_server()
+    if not server:
+        raise RuntimeError("Plex server URL is not configured. Open Settings to add it.")
     resp = requests.get(
-        f"{PLEX_SERVER}{path}",
+        f"{server}{path}",
         headers=BASE_HEADERS,
         params={"X-Plex-Token": token, **params},
         timeout=60,
@@ -101,8 +150,11 @@ def plex_get(path: str, token: str, **params) -> dict:
     return resp.json()["MediaContainer"]
 
 def plex_delete(rk: str, token: str) -> None:
+    server = get_plex_server()
+    if not server:
+        raise RuntimeError("Plex server URL is not configured. Open Settings to add it.")
     requests.delete(
-        f"{PLEX_SERVER}/library/metadata/{rk}",
+        f"{server}/library/metadata/{rk}",
         headers=BASE_HEADERS,
         params={"X-Plex-Token": token},
         timeout=30,
@@ -618,29 +670,53 @@ class ArrConfigScreen(Screen):
 # ── Settings Screen ────────────────────────────────────────────────────────────
 
 class SettingsScreen(Screen):
-    """Overview of arr integrations with links to configure each."""
+    """Configure Plex server and optional Radarr/Sonarr integrations."""
 
-    BINDINGS = [Binding("escape,q", "go_back", "Back")]
+    BINDINGS = [Binding("escape,q", "action_go_back", "Back")]
     CSS = """
     SettingsScreen { align: center middle; }
     #set-panel {
-        width: 64; padding: 2 4;
+        width: 72; padding: 2 4;
         background: $surface; border: round $primary;
         height: auto;
     }
     #set-title { text-style: bold; color: $accent; text-align: center; margin-bottom: 1; }
+    #set-setup-hint {
+        color: $warning; text-align: center; margin-bottom: 1;
+    }
     .set-row { height: 3; align: left middle; margin-bottom: 1; }
     .set-label { width: 12; color: $text-muted; }
     .set-status { width: 1fr; }
     .set-status.ok { color: $success; }
     .set-status.missing { color: $warning; }
+    #plex-row { height: auto; align: left middle; margin-bottom: 0; }
+    #plex-url-input { width: 1fr; margin: 0 1; }
+    #plex-save-status { height: 1; margin-bottom: 1; }
+    #set-section { text-style: bold; color: $text-muted; margin-top: 1; margin-bottom: 0; }
     """
 
     def compose(self) -> ComposeResult:
+        plex   = get_plex_server()
         radarr = get_arr_cfg("radarr")
         sonarr = get_arr_cfg("sonarr")
+        is_setup = len(self.app.screen_stack) == 1
         with Container(id="set-panel"):
-            yield Static("Integrations", id="set-title")
+            yield Static("Settings", id="set-title")
+            if is_setup:
+                yield Static(
+                    "Enter your Plex server URL to get started.",
+                    id="set-setup-hint",
+                )
+            with Horizontal(id="plex-row"):
+                yield Static("Plex Server", classes="set-label")
+                yield Input(
+                    plex or "",
+                    placeholder="https://your-plex-server.example.com",
+                    id="plex-url-input",
+                )
+                yield Button("Save", id="btn-plex-save", variant="primary")
+            yield Static("", id="plex-save-status")
+            yield Static("Integrations", id="set-section")
             with Horizontal(classes="set-row"):
                 yield Static("Radarr", classes="set-label")
                 if radarr:
@@ -655,8 +731,21 @@ class SettingsScreen(Screen):
                 else:
                     yield Static("Not configured", classes="set-status missing")
                 yield Button("Edit", id="btn-sonarr", variant="default")
-            yield Button("Back", id="btn-back", variant="default")
+            if is_setup:
+                yield Button("Continue", id="btn-back", variant="primary")
+            else:
+                yield Button("Back", id="btn-back", variant="default")
         yield Footer()
+
+    @on(Button.Pressed, "#btn-plex-save")
+    def save_plex(self) -> None:
+        url = self.query_one("#plex-url-input", Input).value.strip()
+        status = self.query_one("#plex-save-status", Static)
+        if not url:
+            status.update("[red]URL is required.[/red]")
+            return
+        save_plex_server(url)
+        status.update("[green]Plex server saved.[/green]")
 
     @on(Button.Pressed, "#btn-radarr")
     def edit_radarr(self) -> None:
@@ -668,7 +757,15 @@ class SettingsScreen(Screen):
 
     @on(Button.Pressed, "#btn-back")
     def action_go_back(self) -> None:
-        self.app.pop_screen()
+        if len(self.app.screen_stack) == 1:
+            if not get_plex_server():
+                self.query_one("#plex-save-status", Static).update(
+                    "[red]Plex server URL is required to continue.[/red]"
+                )
+                return
+            self.app.push_screen(LibraryScreen())
+        else:
+            self.app.pop_screen()
 
 
 # ── Auth Screen ────────────────────────────────────────────────────────────────
@@ -738,7 +835,10 @@ class AuthScreen(Screen):
 
     def on_auth_screen_signed_in(self, event: SignedIn) -> None:
         self.app.token = event.token  # type: ignore[attr-defined]
-        self.app.switch_screen(LibraryScreen())
+        if get_plex_server():
+            self.app.switch_screen(LibraryScreen())
+        else:
+            self.app.switch_screen(SettingsScreen())
 
     def on_auth_screen_sign_in_failed(self, event: SignInFailed) -> None:
         self.query_one("#err", Static).update(event.error)
@@ -1295,7 +1395,10 @@ class PlexCleanupApp(App):
         token = get_saved_token()
         if token:
             self.token = token
-            self.push_screen(LibraryScreen())
+            if get_plex_server():
+                self.push_screen(LibraryScreen())
+            else:
+                self.push_screen(SettingsScreen())
         else:
             self.push_screen(AuthScreen())
 
