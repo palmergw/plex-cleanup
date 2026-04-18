@@ -672,7 +672,7 @@ class ArrConfigScreen(Screen):
 class SettingsScreen(Screen):
     """Configure Plex server and optional Radarr/Sonarr integrations."""
 
-    BINDINGS = [Binding("escape,q", "action_go_back", "Back")]
+    BINDINGS = [Binding("escape,q", "go_back", "Back")]
     CSS = """
     SettingsScreen { align: center middle; }
     #set-panel {
@@ -695,11 +695,15 @@ class SettingsScreen(Screen):
     #set-section { text-style: bold; color: $text-muted; margin-top: 1; margin-bottom: 0; }
     """
 
+    def __init__(self, setup_mode: bool = False) -> None:
+        super().__init__()
+        self._setup_mode = setup_mode
+
     def compose(self) -> ComposeResult:
         plex   = get_plex_server()
         radarr = get_arr_cfg("radarr")
         sonarr = get_arr_cfg("sonarr")
-        is_setup = len(self.app.screen_stack) == 1
+        is_setup = self._setup_mode
         with Container(id="set-panel"):
             yield Static("Settings", id="set-title")
             if is_setup:
@@ -757,13 +761,13 @@ class SettingsScreen(Screen):
 
     @on(Button.Pressed, "#btn-back")
     def action_go_back(self) -> None:
-        if len(self.app.screen_stack) == 1:
+        if self._setup_mode:
             if not get_plex_server():
                 self.query_one("#plex-save-status", Static).update(
                     "[red]Plex server URL is required to continue.[/red]"
                 )
                 return
-            self.app.push_screen(LibraryScreen())
+            self.app.switch_screen(LibraryScreen())
         else:
             self.app.pop_screen()
 
@@ -838,7 +842,7 @@ class AuthScreen(Screen):
         if get_plex_server():
             self.app.switch_screen(LibraryScreen())
         else:
-            self.app.switch_screen(SettingsScreen())
+            self.app.switch_screen(SettingsScreen(setup_mode=True))
 
     def on_auth_screen_sign_in_failed(self, event: SignInFailed) -> None:
         self.query_one("#err", Static).update(event.error)
@@ -1398,7 +1402,7 @@ class PlexCleanupApp(App):
             if get_plex_server():
                 self.push_screen(LibraryScreen())
             else:
-                self.push_screen(SettingsScreen())
+                self.push_screen(SettingsScreen(setup_mode=True))
         else:
             self.push_screen(AuthScreen())
 
