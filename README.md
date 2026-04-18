@@ -25,29 +25,30 @@ An interactive terminal UI for identifying and removing unwatched or stale conte
 
 - Python 3.11+
 - A running Plex Media Server reachable over the network
-- `pip install -r requirements.txt`
-
-```
-requests>=2.31.0
-textual>=0.60.0
-```
+- `venv` support for your Python installation
 
 ---
 
 ## Setup
 
-### 1. Install dependencies
+### 1. Create and activate a virtual environment
 
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-### 2. Configure the Plex server URL
+If you're using PowerShell on Windows, activate it with:
 
-Open `main.py` and update the `PLEX_SERVER` constant at the top of the file to point to your Plex instance:
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
 
-```python
-PLEX_SERVER = "https://plex.yourserver.com"
+### 2. Install dependencies
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
 ### 3. Run the app
@@ -56,7 +57,23 @@ PLEX_SERVER = "https://plex.yourserver.com"
 python main.py
 ```
 
-On first launch you will be prompted to sign in with your **Plex.tv** account (email/username and password). Two-factor authentication is supported. Your auth token is saved to `~/.plex-cleanup.json` so subsequent launches skip the sign-in screen.
+### 4. Sign in and save your Plex server URL
+
+On first launch you will be prompted to sign in with your **Plex.tv** account (email/username and password). Two-factor authentication is supported.
+
+After sign-in, if no Plex server URL is saved yet, the app opens the **Settings** screen automatically. Enter your Plex server base URL in the **Plex Server** field, for example:
+
+```text
+http://192.168.1.10:32400
+```
+
+or
+
+```text
+https://plex.yourserver.com
+```
+
+Select **Save**, then **Continue**. The Plex auth token and server URL are stored in `~/.plex-cleanup.json`, so you do not need to edit `main.py` manually.
 
 ---
 
@@ -182,17 +199,21 @@ Stored at `~/.plex-cleanup.json`. Fields:
 
 ```json
 {
-  "token": "your-plex-auth-token",
+  "_version": 2,
+  "plex": {
+    "token": "your-plex-auth-token",
+    "url": "http://localhost:32400"
+  },
   "radarr": {
     "url": "http://localhost:7878",
-    "api_key": "your-radarr-api-key"
+    "api_key": "your-radarr-api-key",
+    "skip_prompt": false
   },
   "sonarr": {
     "url": "http://localhost:8989",
-    "api_key": "your-sonarr-api-key"
-  },
-  "skip_arr_prompt_radarr": false,
-  "skip_arr_prompt_sonarr": false
+    "api_key": "your-sonarr-api-key",
+    "skip_prompt": false
+  }
 }
 ```
 
