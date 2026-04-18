@@ -1054,7 +1054,12 @@ class GridScreen(Screen):
         t = self.query_one("#grid", DataTable)
         # Preserve cursor position across re-renders
         prior_rows = list(t.ordered_rows)
-        anchor_rk  = str(prior_rows[t.cursor_row].key.value) if prior_rows and t.cursor_row >= 0 else None
+        prior_cursor_row = t.cursor_row
+        anchor_rk = (
+            str(prior_rows[prior_cursor_row].key.value)
+            if prior_rows and prior_cursor_row >= 0
+            else None
+        )
         t.clear()
         items = apply_sort(self._items, self._filter)
         is_movie = self.library["type"] == "movie"
@@ -1091,7 +1096,7 @@ class GridScreen(Screen):
             if anchor_rk in rk_list:
                 t.move_cursor(row=rk_list.index(anchor_rk), animate=False)
             elif rk_list:
-                t.move_cursor(row=min(t.cursor_row, len(rk_list) - 1), animate=False)
+                t.move_cursor(row=min(prior_cursor_row, len(rk_list) - 1), animate=False)
 
         total = sum(i.get("total_size", i.get("size", 0)) for i in items)
         safe  = sum(i.get("safe_size",  i.get("size", 0)) for i in items)
